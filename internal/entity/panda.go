@@ -1,6 +1,7 @@
 package entity
 
 import (
+    "image"
     "github.com/hajimehoshi/ebiten/v2"
     "panda/internal/assets"
 )
@@ -8,58 +9,67 @@ import (
 type Panda struct {
     X, Y         float64
     
-    // New GIF Animation Data
-    frames       []*ebiten.Image
-    delays       []int
+    // Sprite Sheet Data
+    spriteSheet  *ebiten.Image
+    frameWidth   int // Width of ONE frame
+    frameCount   int // Total frames in sheet
     currentFrame int
-    tickCounter  int // Accumulates time
+    
+    // Timing
+    tickCounter  int
+    speed        int // Ticks per frame (Lower = Faster)
 }
 
 func NewPanda() *Panda {
-    // Load GIF instead of PNG
-    // Make sure you have 'panda_idle.gif' in assets/images/
-    anim := assets.LoadGIF("panda_idle.gif")
+    // Load the Sprite Sheet
+    sheet := assets.LoadImage("panda_idle.png")
+    
+    // Auto-detect frame count based on aspect ratio
+    // Assumption: The sheet is a horizontal strip of square-ish frames
+    totalW, totalH := sheet.Bounds().Dx(), sheet.Bounds().Dy()
+    
+    // Simple logic: If height is 32, and width is 128, we have 4 frames.
+    // If it's a single image, width == height (usually).
+    count := totalW / totalH 
+    if count == 0 { count = 1 }
 
     return &Panda{
-        X:      120,
-        Y:      100,
-        frames: anim.Frames,
-        delays: anim.Delays,
+        X:           120,
+        Y:           100,
+        spriteSheet: sheet,
+        frameWidth:  totalH, // Assuming frames are square (32x32)
+        frameCount:  count,
+        speed:       15,     // Update every 15 ticks (approx 4 times/sec)
     }
 }
 
 func (p *Panda) Update() {
-    if len(p.frames) == 0 {
-        return
-    }
-
     p.tickCounter++
 
-    // Check if we passed the delay for the CURRENT frame
-    targetDelay := p.delays[p.currentFrame]
-    
-    if p.tickCounter >= targetDelay {
+    if p.tickCounter >= p.speed {
         p.tickCounter = 0
         p.currentFrame++
         
-        // Loop back to start
-        if p.currentFrame >= len(p.frames) {
+        // Loop Animation
+        if p.currentFrame >= p.frameCount {
             p.currentFrame = 0
         }
     }
 }
 
 func (p *Panda) Draw(screen *ebiten.Image) {
-    if len(p.frames) == 0 {
-        return
-    }
+    if p.spriteSheet == nil { return }
 
-    // Get the specific image for this moment
-    img := p.frames[p.currentFrame]
+    // Math: Calculate where the current frame lives on the sheet
+    sx := p.currentFrame * p.frameWidth
+    
+    // Cut out the frame
+    rect := image.Rect(sx, 0, sx+p.frameWidth, p.spriteSheet.Bounds().Dy())
+    subImg := p.spriteSheet.SubImage(rect).(*ebiten.Image)
 
     op := &ebiten.DrawImageOptions{}
     op.GeoM.Translate(p.X, p.Y)
-    op.GeoM.Scale(4, 4) // Keep the retro pixel look!
+    op.GeoM.Scale(4, 4) // Retro Zoom
 
-    screen.DrawImage(img, op)
+    screen.DrawImage(subImg, op)
 }

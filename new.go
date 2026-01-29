@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hajimehoshi/ebiten/v2"
+	"github.com/hajimehoshi/ebiten/v2/audio"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
 	"github.com/hajimehoshi/ebiten/v2/vector"
@@ -18,17 +19,18 @@ import (
 const (
 	ScreenWidth  = 320
 	ScreenHeight = 240
-	ScaleFactor  = 3
+	SampleRate   = 44100
 )
 
-// --- Colors ---
+// --- Colors (Retro Palette) ---
 var (
-	ColBackground = color.RGBA{0x2b, 0x2b, 0x2b, 0xff} // Dark Grey
-	ColPandaWhite = color.RGBA{0xf0, 0xf0, 0xf0, 0xff}
-	ColPandaBlack = color.RGBA{0x1a, 0x1a, 0x1a, 0xff}
-	ColBamboo     = color.RGBA{0x6b, 0x8c, 0x42, 0xff} // Green
-	ColFood       = color.RGBA{0xff, 0x6b, 0x6b, 0xff} // Red/Pink (Apple)
-	ColBar        = color.RGBA{0x4e, 0xcd, 0xc4, 0xff} // Cyan for music
+	ColBg        = color.RGBA{0x2d, 0x2d, 0x2d, 0xff} // Dark Grey
+	ColPandaWhite= color.RGBA{0xff, 0xff, 0xff, 0xff}
+	ColPandaBlack= color.RGBA{0x10, 0x10, 0x10, 0xff}
+	ColAccent    = color.RGBA{0xff, 0x6b, 0x6b, 0xff} // Red
+	ColWater     = color.RGBA{0x4e, 0xcd, 0xc4, 0xff} // Cyan
+	ColBamboo    = color.RGBA{0x6b, 0x8c, 0x42, 0xff} // Green
+	ColGold      = color.RGBA{0xff, 0xd9, 0x3d, 0xff} // Gold
 )
 
 // --- Enums ---
@@ -37,12 +39,63 @@ type GameMode int
 const (
 	ModeRelax GameMode = iota
 	ModeFocus
-	ModeEating
+	ModeFishing  // Replaces Eating
 	ModeMusic
-	ModeMinigame
+	ModeCooking  // Replaces Minigame
 )
 
-// --- Sub-System Structs ---
+// --- Audio Stream (Chiptune Generator) ---
+type ChiptuneStream struct {
+	tick    float64
+	freq    float64
+	vol     float64 // Used for Visual Sync
+	beat    int
+}
+
+func (s *ChiptuneStream) Read(buf []byte) (int, error) {
+	for i := 0; i < len(buf); i += 4 {
+		// Procedural Melody: Change frequency every 0.2 seconds
+		s.tick++
+		if int(s.tick)%8000 == 0 {
+			notes := []float64{220, 261, 329, 392, 440, 523} // A minor pentatonic
+			s.freq = notes[rand.Intn(len(notes))]
+			s.beat = 10 // Trigger visual beat
+		}
+
+		// Decay beat for visuals
+		if s.beat > 0 { s.beat-- }
+		s.vol = math.Max(0, s.vol-0.0001)
+
+		// Square Wave Synthesis
+		val := 0.0
+		phase := int(s.tick * s.freq * 2 * math.Pi / SampleRate)
+		if phase%2 == 0 { val = 0.1 } else { val = -0.1 }
+
+		// Write to buffer (Little Endian Float32)
+		v := int16(val * 32767)
+		buf[i] = byte(v)
+		buf[i+1] = byte(v >> 8)
+		buf[i+2] = byte(v)
+		buf[i+3] = byte(v >> 8)
+	}
+	return len(buf), nil
+}
+
+// --- Sub-Systems ---
+type FishingGame struct {
+	BobberY    float64
+	IsCasted   bool
+	FishHooked bool
+	Score      int
+	Tension    float64
+}
+
+type CookingGame struct {
+	Progress  float64 // 0 to 100
+	Chopped   int
+	IsChopping bool
+	KnifeY    float64
+}
 
 type FocusTimer struct {
 	Active   bool
@@ -51,298 +104,175 @@ type FocusTimer struct {
 	LastTick time.Time
 }
 
-type FoodItem struct {
-	X, Y   float64
-	Active bool
-}
-
-type MinigameState struct {
-	Score      int
-	BallX      float64
-	BallY      float64
-	BallSpeedY float64
-	IsGameOver bool
-}
-
 // --- Main Game State ---
 type Game struct {
 	Mode      GameMode
 	Tick      int
 	PandaX    float64
 	PandaY    float64
-	AnimFrame int
+	
+	// Audio
+	AudioCtx *audio.Context
+	Player   *audio.Player
+	Stream   *ChiptuneStream
 
-	// Sub-systems
+	// Systems
 	Timer    FocusTimer
-	Food     FoodItem      // One item at a time for simplicity
-	MiniGame MinigameState // State for the catching game
-	MusicBars []float32    // For visualizer
+	Fishing  FishingGame
+	Cooking  CookingGame
 }
 
-// --- Procedural Art Grids ---
-// 0=Empty, 1=White, 2=Black
-var pandaSprite = [][]uint8{
-	{0, 2, 0, 0, 0, 2, 0},
-	{2, 1, 2, 2, 2, 1, 2},
-	{2, 1, 1, 2, 1, 1, 2},
-	{0, 2, 2, 2, 2, 2, 0},
-	{0, 2, 1, 1, 1, 2, 0},
-	{2, 0, 2, 0, 2, 0, 2},
-	{2, 0, 2, 0, 2, 0, 2},
-}
-
-// --- Initialization ---
 func NewGame() *Game {
-	g := &Game{
-		Mode:   ModeRelax,
-		PandaX: 140,
-		PandaY: 100,
-		Timer: FocusTimer{
-			Duration: 25 * time.Minute,
-			TimeLeft: 25 * time.Minute,
-		},
-		MiniGame: MinigameState{
-			BallY: -10, // Start off screen
-		},
-		MusicBars: make([]float32, 10),
+	// Init Audio
+	ctx := audio.NewContext(SampleRate)
+	stream := &ChiptuneStream{freq: 440}
+	player, _ := ctx.NewPlayer(stream)
+	player.SetVolume(0.5)
+	
+	return &Game{
+		Mode:     ModeRelax,
+		PandaX:   160,
+		PandaY:   140,
+		AudioCtx: ctx,
+		Player:   player,
+		Stream:   stream,
+		Timer: FocusTimer{Duration: 25 * time.Minute, TimeLeft: 25 * time.Minute},
 	}
-	return g
 }
 
-// --- Update Loop ---
+// --- UPDATE ---
 func (g *Game) Update() error {
 	g.Tick++
 
-	// 1. Global Mode Switching
-	if inpututil.IsKeyJustPressed(ebiten.Key1) { g.Mode = ModeRelax }
-	if inpututil.IsKeyJustPressed(ebiten.Key2) { g.Mode = ModeFocus }
-	if inpututil.IsKeyJustPressed(ebiten.Key3) { g.Mode = ModeEating }
-	if inpututil.IsKeyJustPressed(ebiten.Key4) { g.Mode = ModeMusic }
-	if inpututil.IsKeyJustPressed(ebiten.Key5) { 
-		g.Mode = ModeMinigame
-		g.resetMinigame()
-	}
+	// Mode Switching
+	if inpututil.IsKeyJustPressed(ebiten.Key1) { g.Mode = ModeRelax; g.Player.Pause() }
+	if inpututil.IsKeyJustPressed(ebiten.Key2) { g.Mode = ModeFocus; g.Player.Pause() }
+	if inpututil.IsKeyJustPressed(ebiten.Key3) { g.Mode = ModeFishing; g.Player.Pause() }
+	if inpututil.IsKeyJustPressed(ebiten.Key4) { g.Mode = ModeMusic; g.Player.Play() }
+	if inpututil.IsKeyJustPressed(ebiten.Key5) { g.Mode = ModeCooking; g.Player.Pause() }
 
-	// 2. Mode Specific Logic
 	switch g.Mode {
 	case ModeRelax:
-		// Idle bobbing
-		if g.Tick%30 == 0 { g.AnimFrame++ }
+		// Gentle breathing animation
+		g.PandaY = 140 + math.Sin(float64(g.Tick)*0.05)*2
 
 	case ModeFocus:
-		g.updateFocus()
-
-	case ModeEating:
-		g.updateEating()
+		if inpututil.IsKeyJustPressed(ebiten.KeySpace) && !g.Timer.Active {
+			g.Timer.Active = true
+			g.Timer.LastTick = time.Now()
+		}
+		if g.Timer.Active {
+			dt := time.Since(g.Timer.LastTick)
+			g.Timer.LastTick = time.Now()
+			g.Timer.TimeLeft -= dt
+		}
 
 	case ModeMusic:
-		g.updateMusic()
+		// Panda bounces to the ACTUAL audio envelope we are generating
+		if g.Stream.beat > 0 {
+			g.PandaY = 150 // Jump down
+		} else {
+			g.PandaY = 130 + math.Sin(float64(g.Tick)*0.1)*5 // Return up
+		}
 
-	case ModeMinigame:
-		g.updateMinigame()
+	case ModeFishing:
+		if inpututil.IsKeyJustPressed(ebiten.KeySpace) {
+			if !g.Fishing.IsCasted {
+				g.Fishing.IsCasted = true
+				g.Fishing.BobberY = 180
+			} else if g.Fishing.FishHooked {
+				g.Fishing.Score++
+				g.Fishing.IsCasted = false
+				g.Fishing.FishHooked = false
+			} else {
+				g.Fishing.IsCasted = false // Pulled too early
+			}
+		}
+		// Random bite logic
+		if g.Fishing.IsCasted && !g.Fishing.FishHooked {
+			if rand.Intn(100) < 2 { g.Fishing.FishHooked = true }
+		}
+
+	case ModeCooking:
+		g.Cooking.KnifeY = 110
+		if inpututil.IsKeyJustPressed(ebiten.KeySpace) {
+			g.Cooking.Chopped++
+			g.Cooking.Progress += 5
+			g.Cooking.KnifeY = 130 // Chop down
+			if g.Cooking.Progress >= 100 { g.Cooking.Progress = 0; g.Cooking.Chopped = 0 }
+		}
 	}
 
 	return nil
 }
 
-// --- Logic Implementations ---
-
-func (g *Game) updateFocus() {
-	if inpututil.IsKeyJustPressed(ebiten.KeySpace) && !g.Timer.Active {
-		g.Timer.Active = true
-		g.Timer.LastTick = time.Now()
-	}
-
-	if g.Timer.Active {
-		now := time.Now()
-		dt := now.Sub(g.Timer.LastTick)
-		g.Timer.LastTick = now
-		g.Timer.TimeLeft -= dt
-		if g.Timer.TimeLeft <= 0 {
-			g.Timer.Active = false
-			g.Timer.TimeLeft = 0
-		}
-	}
-}
-
-func (g *Game) updateEating() {
-	// Click to spawn food
-	if inpututil.IsMouseButtonJustPressed(ebiten.MouseButtonLeft) {
-		mx, my := ebiten.CursorPosition()
-		g.Food.X = float64(mx)
-		g.Food.Y = float64(my)
-		g.Food.Active = true
-	}
-
-	// Walk towards food
-	if g.Food.Active {
-		dx := g.Food.X - (g.PandaX + 14) // Center offset
-		dy := g.Food.Y - (g.PandaY + 14)
-		dist := math.Sqrt(dx*dx + dy*dy)
-
-		if dist > 5 {
-			g.PandaX += (dx / dist) * 2
-			g.PandaY += (dy / dist) * 2
-			if g.Tick%10 == 0 { g.AnimFrame++ } // Walk animation
-		} else {
-			// Eat it
-			g.Food.Active = false
-			g.AnimFrame = 0 // Reset
-		}
-	}
-}
-
-func (g *Game) updateMusic() {
-	// Simulate Audio Analysis (Randomize bars)
-	if g.Tick%5 == 0 {
-		for i := range g.MusicBars {
-			// Smooth random movement
-			target := rand.Float32() * 50
-			g.MusicBars[i] += (target - g.MusicBars[i]) * 0.2
-		}
-	}
-	// Dance to the "beat"
-	if g.Tick%20 == 0 {
-		g.AnimFrame++
-	}
-}
-
-func (g *Game) updateMinigame() {
-	if g.MiniGame.IsGameOver {
-		if inpututil.IsKeyJustPressed(ebiten.KeyEnter) {
-			g.resetMinigame()
-		}
-		return
-	}
-
-	// Player Movement
-	if ebiten.IsKeyPressed(ebiten.KeyLeft) { g.PandaX -= 3 }
-	if ebiten.IsKeyPressed(ebiten.KeyRight) { g.PandaX += 3 }
-
-	// Clamp Screen
-	if g.PandaX < 0 { g.PandaX = 0 }
-	if g.PandaX > ScreenWidth-30 { g.PandaX = ScreenWidth - 30 }
-
-	// Ball Logic
-	g.MiniGame.BallY += g.MiniGame.BallSpeedY
-	
-	// Check Collision (Simple AABB)
-	pandaRect := struct{x,y,w,h float64}{g.PandaX, 200, 28, 28}
-	ballRect := struct{x,y,w,h float64}{g.MiniGame.BallX, g.MiniGame.BallY, 8, 8}
-
-	if g.checkCollision(pandaRect, ballRect) {
-		g.MiniGame.Score++
-		g.MiniGame.BallY = -10
-		g.MiniGame.BallX = float64(rand.Intn(ScreenWidth - 10))
-		g.MiniGame.BallSpeedY += 0.2 // Get harder
-	}
-
-	// Miss?
-	if g.MiniGame.BallY > ScreenHeight {
-		g.MiniGame.IsGameOver = true
-	}
-}
-
-func (g *Game) resetMinigame() {
-	g.MiniGame.Score = 0
-	g.MiniGame.IsGameOver = false
-	g.MiniGame.BallY = -10
-	g.MiniGame.BallX = float64(rand.Intn(ScreenWidth - 10))
-	g.MiniGame.BallSpeedY = 2.0
-	g.PandaX = ScreenWidth / 2
-	g.PandaY = 200 // Lock Y for minigame
-}
-
-func (g *Game) checkCollision(r1, r2 struct{x,y,w,h float64}) bool {
-	return r1.x < r2.x+r2.w &&
-		r1.x+r1.w > r2.x &&
-		r1.y < r2.y+r2.h &&
-		r1.y+r1.h > r2.y
-}
-
-// --- Draw Loop ---
+// --- DRAW ---
 func (g *Game) Draw(screen *ebiten.Image) {
-	screen.Fill(ColBackground)
+	screen.Fill(ColBg)
 
 	switch g.Mode {
 	case ModeRelax:
-		ebitenutil.DebugPrint(screen, "MODE: RELAX\n[1-5] to Switch Modes")
-		g.drawPanda(screen, g.PandaX, g.PandaY, false)
+		ebitenutil.DebugPrint(screen, "RELAX MODE")
+		g.DrawPanda(screen, g.PandaX, g.PandaY, "none")
 
 	case ModeFocus:
 		mins := int(g.Timer.TimeLeft.Minutes())
 		secs := int(g.Timer.TimeLeft.Seconds()) % 60
-		msg := fmt.Sprintf("FOCUS TIMER\n\n%02d:%02d\n\n(Space to Start)", mins, secs)
-		ebitenutil.DebugPrint(screen, msg)
-		g.drawPanda(screen, 20, 200, false) // Small panda in corner
+		ebitenutil.DebugPrint(screen, fmt.Sprintf("FOCUS: %02d:%02d (Space to Start)", mins, secs))
+		g.DrawPanda(screen, 40, 200, "glasses") // Study Glasses
 
-	case ModeEating:
-		ebitenutil.DebugPrint(screen, "MODE: EATING\n(Click to feed)")
-		g.drawPanda(screen, g.PandaX, g.PandaY, false)
-		if g.Food.Active {
-			// Draw Bamboo (Green Box)
-			vector.DrawFilledRect(screen, float32(g.Food.X), float32(g.Food.Y), 8, 20, ColBamboo, false)
+	case ModeFishing:
+		ebitenutil.DebugPrint(screen, fmt.Sprintf("FISHING SCORE: %d (Space to Cast/Reel)", g.Fishing.Score))
+		// Draw Water
+		vector.DrawFilledRect(screen, 0, 180, ScreenWidth, 60, ColWater, false)
+		// Draw Bobber
+		if g.Fishing.IsCasted {
+			by := float32(g.Fishing.BobberY)
+			if g.Fishing.FishHooked {
+				by += float32(math.Sin(float64(g.Tick)*0.5) * 5) // Shake if bitten
+				ebitenutil.DebugPrintAt(screen, "!!!", int(g.PandaX)+20, int(g.PandaY)-40)
+			}
+			vector.DrawFilledCircle(screen, float32(g.PandaX)+40, by, 3, ColAccent, false)
+			vector.StrokeLine(screen, float32(g.PandaX)+15, float32(g.PandaY), float32(g.PandaX)+40, by, 1, ColPandaWhite, false)
 		}
+		g.DrawPanda(screen, g.PandaX, g.PandaY, "rod")
 
 	case ModeMusic:
-		ebitenutil.DebugPrint(screen, "MODE: MUSIC")
-		// Draw Visualizer
-		barW := float32(ScreenWidth) / float32(len(g.MusicBars))
-		for i, h := range g.MusicBars {
-			x := float32(i) * barW
-			vector.DrawFilledRect(screen, x, ScreenHeight-h, barW-2, h, ColBar, false)
-		}
-		// Draw Dancing Panda
-		g.drawPanda(screen, ScreenWidth/2-14, ScreenHeight/2, true)
+		ebitenutil.DebugPrint(screen, "MUSIC SYNC (Chiptune Generated Realtime)")
+		// Visualizer Bars (Driven by Synth Frequency)
+		h := float32(g.Stream.freq) / 10.0
+		vector.DrawFilledRect(screen, 50, 200-h, 20, h, ColAccent, false)
+		vector.DrawFilledRect(screen, 250, 200-h, 20, h, ColAccent, false)
+		g.DrawPanda(screen, g.PandaX, g.PandaY, "headphones")
 
-	case ModeMinigame:
-		ebitenutil.DebugPrint(screen, fmt.Sprintf("SCORE: %d", g.MiniGame.Score))
-		if g.MiniGame.IsGameOver {
-			ebitenutil.DebugPrintAt(screen, "GAME OVER\n(Enter to Restart)", 100, 100)
-		} else {
-			// Draw Ball (Bamboo)
-			vector.DrawFilledRect(screen, float32(g.MiniGame.BallX), float32(g.MiniGame.BallY), 8, 8, ColBamboo, false)
-			// Draw Panda
-			g.drawPanda(screen, g.PandaX, 200, false)
-		}
+	case ModeCooking:
+		ebitenutil.DebugPrint(screen, "COOKING: Press Space to Chop!")
+		// Progress Bar
+		vector.DrawFilledRect(screen, 50, 20, float32(g.Cooking.Progress)*2, 10, ColBamboo, false)
+		// Table
+		vector.DrawFilledRect(screen, 100, 150, 120, 10, color.RGBA{100,100,100,255}, false)
+		// Knife
+		vector.DrawFilledRect(screen, float32(g.PandaX)+20, float32(g.Cooking.KnifeY), 5, 20, ColPandaWhite, false)
+		g.DrawPanda(screen, g.PandaX, g.PandaY, "chef")
 	}
 }
 
-// --- Helper: Procedural Panda Renderer ---
-func (g *Game) drawPanda(screen *ebiten.Image, x, y float64, dance bool) {
-	pixelSize := float32(4)
-	
-	// Animation Logic
-	bounce := float32(0)
-	if dance {
-		// Squash and stretch effect
-		if g.AnimFrame%2 == 0 { pixelSize = 3; y += 4 } // Squash
-	} else {
-		if g.AnimFrame%2 == 0 { bounce = -2 } // Bob
-	}
+// --- Better Panda Renderer (Vector Based) ---
+func (g *Game) DrawPanda(screen *ebiten.Image, x, y float64, costume string) {
+	px, py := float32(x), float32(y)
 
-	for r, row := range pandaSprite {
-		for c, val := range row {
-			if val == 0 { continue }
-			px := float32(x) + (float32(c) * pixelSize)
-			py := float32(y) + (float32(r) * pixelSize) + bounce
-			
-			var col color.Color
-			if val == 1 { col = ColPandaWhite }
-			if val == 2 { col = ColPandaBlack }
-			vector.DrawFilledRect(screen, px, py, pixelSize, pixelSize, col, false)
-		}
-	}
-}
+	// 1. Ears (Black Circles)
+	vector.DrawFilledCircle(screen, px-12, py-15, 8, ColPandaBlack, true) // Left
+	vector.DrawFilledCircle(screen, px+12, py-15, 8, ColPandaBlack, true) // Right
 
-func (g *Game) Layout(w, h int) (int, int) {
-	return ScreenWidth, ScreenHeight
-}
+	// 2. Head (White Circle) - Much rounder than a grid
+	vector.DrawFilledCircle(screen, px, py, 20, ColPandaWhite, true)
 
-func main() {
-	ebiten.SetWindowSize(ScreenWidth*ScaleFactor, ScreenHeight*ScaleFactor)
-	ebiten.SetWindowTitle("Panda Go: All Modes")
-	if err := ebiten.RunGame(NewGame()); err != nil {
-		log.Fatal(err)
-	}
-}
+	// 3. Eyes (Black Patches + White Pupils)
+	vector.DrawFilledCircle(screen, px-8, py-2, 6, ColPandaBlack, true)
+	vector.DrawFilledCircle(screen, px+8, py-2, 6, ColPandaBlack, true)
+	vector.DrawFilledCircle(screen, px-8, py-3, 2, ColPandaWhite, true) // Pupil
+	vector.DrawFilledCircle(screen, px+8, py-3, 2, ColPandaWhite, true) // Pupil
+
+	// 4. Nose
+	vector.DrawFilledCircle(screen, px, py+5, 3, ColPanda

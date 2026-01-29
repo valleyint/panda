@@ -275,4 +275,50 @@ func (g *Game) DrawPanda(screen *ebiten.Image, x, y float64, costume string) {
 	vector.DrawFilledCircle(screen, px+8, py-3, 2, ColPandaWhite, true) // Pupil
 
 	// 4. Nose
-	vector.DrawFilledCircle(screen, px, py+5, 3, ColPanda
+	vector.DrawFilledCircle(screen, px, py+5, 3, ColPandaBlack, true)
+
+	// 5. Body (Rounded Rect)
+	vector.DrawFilledRect(screen, px-15, py+15, 30, 25, ColPandaWhite, true)
+	
+	// 6. Arms/Legs
+	vector.DrawFilledCircle(screen, px-18, py+20, 7, ColPandaBlack, true) // L Arm
+	vector.DrawFilledCircle(screen, px+18, py+20, 7, ColPandaBlack, true) // R Arm
+	vector.DrawFilledCircle(screen, px-12, py+40, 7, ColPandaBlack, true) // L Foot
+	vector.DrawFilledCircle(screen, px+12, py+40, 7, ColPandaBlack, true) // R Foot
+
+	// --- COSTUMES ---
+	switch costume {
+	case "headphones":
+		// Band
+		vector.StrokeLine(screen, px-20, py, px+20, py, 3, ColAccent, true)
+		// Cups
+		vector.DrawFilledRect(screen, px-24, py-5, 6, 15, ColPandaBlack, true)
+		vector.DrawFilledRect(screen, px+18, py-5, 6, 15, ColPandaBlack, true)
+	
+	case "chef":
+		// Hat
+		vector.DrawFilledRect(screen, px-10, py-35, 20, 15, ColPandaWhite, true)
+		vector.DrawFilledCircle(screen, px, py-35, 12, ColPandaWhite, true)
+
+	case "rod":
+		// Fishing Rod Line
+		vector.StrokeLine(screen, px+15, py+20, px+40, py-10, 2, color.RGBA{139, 69, 19, 255}, true)
+	
+	case "glasses":
+		vector.StrokeLine(screen, px-12, py-2, px+12, py-2, 1, ColPandaBlack, true)
+		vector.DrawFilledCircle(screen, px-8, py-2, 7, color.RGBA{0,0,0,50}, true)
+		vector.DrawFilledCircle(screen, px+8, py-2, 7, color.RGBA{0,0,0,50}, true)
+	}
+}
+
+func (g *Game) Layout(w, h int) (int, int) {
+	return ScreenWidth, ScreenHeight
+}
+
+func main() {
+	ebiten.SetWindowSize(ScreenWidth*3, ScreenHeight*3)
+	ebiten.SetWindowTitle("Panda: Ultimate Edition")
+	if err := ebiten.RunGame(NewGame()); err != nil {
+		log.Fatal(err)
+	}
+}

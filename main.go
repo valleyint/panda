@@ -17,6 +17,8 @@ func main() {
     ebiten.SetWindowSize(ScreenWidth*3, ScreenHeight*3) // 3x Scale for desktop
     ebiten.SetWindowTitle(WindowTitle)
     ebiten.SetWindowResizingMode(ebiten.WindowResizingModeEnabled)
+	ebiten.SetFilter(ebiten.FilterNearest) // Disables smoothing/blurring
+	
 
     // 2. Initialize Game
     game := NewGame()

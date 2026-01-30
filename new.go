@@ -29,13 +29,22 @@ const (
 
 // --- Colors ---
 var (
-	ColGopherBlue  = color.RGBA{0x7f, 0xd5, 0xea, 0xff} // Official Gopher Cyan
-	ColGopherDark  = color.RGBA{0x00, 0x00, 0x00, 0xff} // Black outline/eyes
-	ColGopherSnout = color.RGBA{0xfd, 0xe6, 0x8a, 0xff} // Tan/Yellowish snout
+	ColGopherBlue  = color.RGBA{0x7f, 0xd5, 0xea, 0xff} // Cyan
+	ColGopherDark  = color.RGBA{0x00, 0x00, 0x00, 0xff} // Black
+	ColGopherSnout = color.RGBA{0xfd, 0xe6, 0x8a, 0xff} // Tan
 	ColGopherTooth = color.RGBA{0xff, 0xff, 0xff, 0xff}
+	
 	ColFishShadow  = color.RGBA{0x00, 0x00, 0x00, 0x50}
 	ColMazeWall    = color.RGBA{0x55, 0x55, 0xff, 0xff}
 	ColDot         = color.RGBA{0xff, 0xb8, 0xae, 0xff}
+	ColHeart       = color.RGBA{0xff, 0x6b, 0x6b, 0xff} // Red
+
+	// Keyboard Colors
+	ColDesk        = color.RGBA{0x8b, 0x5a, 0x2b, 0xff} // Wood
+	ColKeyBase     = color.RGBA{0x20, 0x20, 0x20, 0xff} // Chassis
+	ColKeyRow1     = color.RGBA{0x40, 0x40, 0x40, 0xff} // Dark Keys
+	ColKeyRow2     = color.RGBA{0x80, 0x80, 0x80, 0xff} // Light Keys
+	ColKeySpace    = color.RGBA{0xAA, 0xAA, 0xAA, 0xff} // Spacebar
 )
 
 // --- Enums ---
@@ -67,7 +76,7 @@ type GameStats struct {
 	TodayPlayTimeSec int64  `json:"today_play_time"`
 	LastLoginDate    string `json:"last_login_date"`
 	FishCaught       int    `json:"fish_caught"`
-	PacmanWinsToday  int    `json:"pacman_wins_today"` // New Stat
+	PacmanWinsToday  int    `json:"pacman_wins_today"`
 }
 
 // --- Sub-System States ---
@@ -85,16 +94,13 @@ type FishingGame struct {
 }
 
 type PacmanGame struct {
-	Map       [15][20]int
-	PlayerX   int
-	PlayerY   int
-	GhostX    int
-	GhostY    int
-	GhostMoveTimer int
-	GhostSpeedDelay int // Lower is faster
-	Score     int
-	GameOver  bool
-	Win       bool
+	Map             [15][20]int
+	PlayerX, PlayerY int
+	GhostX, GhostY   int
+	GhostMoveTimer   int
+	GhostSpeedDelay  int
+	Score            int
+	GameOver, Win    bool
 }
 
 // --- Main Game State ---
@@ -113,8 +119,8 @@ type Game struct {
 		TargetMinutes int
 		TimeLeft      time.Duration
 		LastTick      time.Time
-		GopherState   int // 0=Hidden, 1=Swimming, 2=Done(Waiting Input)
-		KissProgress  float64 // 0.0 to 1.0
+		GopherState   int
+		KissProgress  float64
 	}
 	Fishing FishingGame
 	Pacman  PacmanGame
@@ -135,7 +141,6 @@ func NewGame() *Game {
 }
 
 func (g *Game) InitPacman() {
-	// Maze Layout
 	layout := [15][20]int{
 		{1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
 		{1,2,2,2,2,2,1,2,2,2,2,2,2,1,2,2,2,2,2,1},
@@ -150,18 +155,13 @@ func (g *Game) InitPacman() {
 		{1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
 	}
 	for y := 0; y < 11; y++ {
-		for x := 0; x < 20; x++ {
-			g.Pacman.Map[y][x] = layout[y][x]
-		}
+		for x := 0; x < 20; x++ { g.Pacman.Map[y][x] = layout[y][x] }
 	}
 	g.Pacman.PlayerX = 1; g.Pacman.PlayerY = 1
 	g.Pacman.GhostX = 10; g.Pacman.GhostY = 5
-	g.Pacman.Score = 0
-	g.Pacman.GameOver = false
-	g.Pacman.Win = false
+	g.Pacman.Score = 0; g.Pacman.GameOver = false; g.Pacman.Win = false
 
-	// Difficulty Scaling: Base delay 30 frames (0.5s).
-	// Subtract 2 frames per daily win. Min delay 5 frames.
+	// Difficulty Scaling
 	delay := 30 - (g.Stats.PacmanWinsToday * 2)
 	if delay < 5 { delay = 5 }
 	g.Pacman.GhostSpeedDelay = delay
@@ -173,7 +173,7 @@ func (g *Game) LoadData() {
 	today := time.Now().Format("2006-01-02")
 	if g.Stats.LastLoginDate != today { 
 		g.Stats.TodayPlayTimeSec = 0
-		g.Stats.PacmanWinsToday = 0 // Reset difficulty
+		g.Stats.PacmanWinsToday = 0
 		g.Stats.LastLoginDate = today 
 	}
 	if d, err := os.ReadFile(SettingsFile); err == nil { json.Unmarshal(d, &g.Settings) } else {
@@ -231,30 +231,12 @@ func (g *Game) Update() error {
 }
 
 func (g *Game) updateFocus() {
-	// Post-Timer Menu State
 	if g.Timer.GopherState == 2 {
-		// Animate Kiss slowly to 1.0 then stop
-		if g.Timer.KissProgress < 1.0 {
-			g.Timer.KissProgress += 0.01
-		}
-		
-		// Wait for Input
-		if inpututil.IsKeyJustPressed(ebiten.Key3) {
-			g.Timer.GopherState = 0
-			g.Timer.Active = false
-			g.Mode = ModeFishing
-		}
-		if inpututil.IsKeyJustPressed(ebiten.Key4) {
-			g.Timer.GopherState = 0
-			g.Timer.Active = false
-			g.Mode = ModePacman
-			g.InitPacman()
-		}
-		// Reset Logic (Space)
-		if inpututil.IsKeyJustPressed(ebiten.KeySpace) {
-			g.Timer.GopherState = 0
-			g.Timer.Active = false
-		}
+		if g.Timer.KissProgress < 1.0 { g.Timer.KissProgress += 0.01 }
+		// Menu
+		if inpututil.IsKeyJustPressed(ebiten.Key3) { g.Timer.GopherState = 0; g.Timer.Active = false; g.Mode = ModeFishing }
+		if inpututil.IsKeyJustPressed(ebiten.Key4) { g.Timer.GopherState = 0; g.Timer.Active = false; g.Mode = ModePacman; g.InitPacman() }
+		if inpututil.IsKeyJustPressed(ebiten.KeySpace) { g.Timer.GopherState = 0; g.Timer.Active = false }
 		return
 	}
 
@@ -263,28 +245,20 @@ func (g *Game) updateFocus() {
 		if inpututil.IsKeyJustPressed(ebiten.KeyDown) { g.Timer.TargetMinutes -= 5; if g.Timer.TargetMinutes<5{g.Timer.TargetMinutes=5} }
 		g.Timer.TimeLeft = time.Duration(g.Timer.TargetMinutes)*time.Minute
 		if inpututil.IsKeyJustPressed(ebiten.KeySpace) { 
-			g.Timer.Active = true
-			g.Timer.LastTick = time.Now()
-			g.Timer.GopherState = 0
-			g.Timer.KissProgress = 0
+			g.Timer.Active = true; g.Timer.LastTick = time.Now()
+			g.Timer.GopherState = 0; g.Timer.KissProgress = 0
 		}
 	} else {
 		g.Timer.TimeLeft -= time.Since(g.Timer.LastTick); g.Timer.LastTick = time.Now()
 		totalDur := time.Duration(g.Timer.TargetMinutes)*time.Minute
 		if float64(g.Timer.TimeLeft)/float64(totalDur) <= 0.10 { g.Timer.GopherState = 1 }
-		if g.Timer.TimeLeft <= 0 { 
-			g.Timer.TimeLeft=0
-			g.Timer.GopherState=2 
-		}
+		if g.Timer.TimeLeft <= 0 { g.Timer.TimeLeft=0; g.Timer.GopherState=2 }
 	}
 }
 
 func (g *Game) updateFishing() {
 	g.Fishing.WaitTimer++
-	if g.Fishing.WaitTimer > 120 {
-		g.Fishing.WaitTimer = 0
-		g.Fishing.TargetSpot = rand.Intn(3) + 1
-	}
+	if g.Fishing.WaitTimer > 120 { g.Fishing.WaitTimer = 0; g.Fishing.TargetSpot = rand.Intn(3) + 1 }
 
 	if g.Fishing.State == 0 {
 		target := 0
@@ -346,10 +320,7 @@ func (g *Game) movePlayer(dx, dy int) {
 		g.Pacman.PlayerX = nx; g.Pacman.PlayerY = ny
 		if g.Pacman.Map[ny][nx] == 2 {
 			g.Pacman.Map[ny][nx] = 0; g.Pacman.Score++
-			if g.Pacman.Score >= 80 { 
-				g.Pacman.Win = true
-				g.Stats.PacmanWinsToday++ // Inc Difficulty for next time
-			}
+			if g.Pacman.Score >= 80 { g.Pacman.Win = true; g.Stats.PacmanWinsToday++ }
 		}
 	}
 }
@@ -382,18 +353,13 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		g.DrawPanda(screen, 160, 120, "typing")
 		
 		if g.Timer.GopherState > 0 {
-			// Calculate Gopher Position
 			gx := 240.0; gy := 120 + math.Sin(float64(g.Tick)*0.08)*5
 			g.DrawGopher(screen, gx, gy)
-			
 			if g.Timer.GopherState == 2 {
-				// Kiss Animation
 				progress := g.Timer.KissProgress
 				hx := gx - (progress * 60)
 				hy := gy - 10 - (math.Sin(progress*math.Pi) * 20)
 				g.DrawHeart(screen, hx, hy)
-				
-				// Draw Post-Timer Menu
 				ebitenutil.DebugPrintAt(screen, "GREAT JOB!", 120, 180)
 				ebitenutil.DebugPrintAt(screen, "[3] Fishing  [4] Pacman", 100, 200)
 			}
@@ -407,7 +373,6 @@ func (g *Game) Draw(screen *ebiten.Image) {
 			ebitenutil.DebugPrintAt(screen, label, int(sx)-4, 220)
 			if g.Fishing.TargetSpot == i+1 { vector.DrawFilledCircle(screen, sx, 200, 10, ColFishShadow, true) }
 		}
-
 		if g.Fishing.State > 0 {
 			bx, by := float32(g.Fishing.BobberX), float32(g.Fishing.BobberY)
 			if g.Fishing.State == 2 { by += float32(math.Sin(float64(g.Tick)*0.8)*5) }
@@ -431,49 +396,36 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		ppx, ppy := float64(g.Pacman.PlayerX*TileSize)+8, float64(g.Pacman.PlayerY*TileSize)+8
 		g.DrawPandaHead(screen, ppx, ppy, 8)
 		gpx, gpy := float64(g.Pacman.GhostX*TileSize)+8, float64(g.Pacman.GhostY*TileSize)+8
-		vector.DrawFilledCircle(screen, float32(gpx), float32(gpy), 6, ColGopherBlue, true) // Ghost is a blue ball
+		g.DrawGopher(screen, gpx, gpy)
 
 		if g.Pacman.GameOver { ebitenutil.DebugPrintAt(screen, "GAME OVER (Space)", 100, 100) }
 		if g.Pacman.Win { ebitenutil.DebugPrintAt(screen, "YOU WIN! (Space)", 100, 100) }
 	}
 }
 
-// --- Gopher Vector Artist (Refined Design) ---
+// --- Artist ---
+
 func (g *Game) DrawGopher(screen *ebiten.Image, x, y float64) {
 	px, py := float32(x), float32(y)
-
-	// 1. Body: Kidney Bean shape (Two overlapping circles + Rect)
-	// Bottom Heavy
-	vector.DrawFilledCircle(screen, px, py+15, 18, ColGopherBlue, true)
-	// Top (Head)
-	vector.DrawFilledCircle(screen, px-5, py-10, 16, ColGopherBlue, true)
-	// Connector
-	vector.DrawFilledRect(screen, px-20, py-10, 35, 25, ColGopherBlue, true)
-
-	// 2. Eyes (Big & Wide)
-	// Left Eye
+	// Body: Kidney Bean (Bottom, Top, Connector)
+	vector.DrawFilledCircle(screen, px, py+15, 18, ColGopherBlue, true) // Bot
+	vector.DrawFilledCircle(screen, px-5, py-10, 16, ColGopherBlue, true) // Top
+	vector.DrawFilledRect(screen, px-20, py-10, 35, 25, ColGopherBlue, true) // Mid
+	// Eyes
 	vector.DrawFilledCircle(screen, px-12, py-12, 7, color.White, true)
 	vector.DrawFilledCircle(screen, px-10, py-12, 2, ColGopherDark, true)
-	// Right Eye
 	vector.DrawFilledCircle(screen, px+2, py-12, 7, color.White, true)
 	vector.DrawFilledCircle(screen, px+4, py-12, 2, ColGopherDark, true)
-
-	// 3. Snout (Tan oval)
+	// Snout
 	vector.DrawFilledRect(screen, px-10, py-2, 14, 8, ColGopherSnout, true)
 	vector.DrawFilledCircle(screen, px-10, py+2, 4, ColGopherSnout, true)
 	vector.DrawFilledCircle(screen, px+4, py+2, 4, ColGopherSnout, true)
-	// Nose Tip
-	vector.DrawFilledCircle(screen, px-3, py-1, 3, ColGopherDark, true)
-
-	// 4. Tooth (Single buck tooth)
+	vector.DrawFilledCircle(screen, px-3, py-1, 3, ColGopherDark, true) // Nose
+	// Tooth
 	vector.DrawFilledRect(screen, px-5, py+4, 4, 5, ColGopherTooth, true)
-
-	// 5. Ears (Tiny nubs)
+	// Ears
 	vector.DrawFilledCircle(screen, px-18, py-18, 4, ColGopherBlue, true)
 	vector.DrawFilledCircle(screen, px+8, py-20, 4, ColGopherBlue, true)
-
-	// 6. Arms (Tiny nub)
-	vector.DrawFilledCircle(screen, px-15, py+5, 5, ColGopherBlue, true)
 }
 
 func (g *Game) DrawHeart(screen *ebiten.Image, x, y float64) {
@@ -486,29 +438,48 @@ func (g *Game) DrawHeart(screen *ebiten.Image, x, y float64) {
 func (g *Game) DrawPanda(screen *ebiten.Image, x, y float64, costume string) {
 	px, py := float32(x), float32(y)
 	pDark := color.RGBA{20, 20, 20, 255}
-	vector.DrawFilledCircle(screen, px-12, py-15, 8, pDark, true)
+	// Standard Body
+	vector.DrawFilledCircle(screen, px-12, py-15, 8, pDark, true) // Ears
 	vector.DrawFilledCircle(screen, px+12, py-15, 8, pDark, true)
-	vector.DrawFilledCircle(screen, px, py, 20, color.White, true)
-	vector.DrawFilledCircle(screen, px-8, py-2, 6, pDark, true)
+	vector.DrawFilledCircle(screen, px, py, 20, color.White, true) // Head
+	vector.DrawFilledCircle(screen, px-8, py-2, 6, pDark, true) // Eyes
 	vector.DrawFilledCircle(screen, px+8, py-2, 6, pDark, true)
 	vector.DrawFilledCircle(screen, px-8, py-3, 2, color.White, true)
 	vector.DrawFilledCircle(screen, px+8, py-3, 2, color.White, true)
-	vector.DrawFilledCircle(screen, px, py+5, 3, pDark, true)
-	vector.DrawFilledRect(screen, px-15, py+15, 30, 25, color.White, true)
-	if costume != "typing" {
-		vector.DrawFilledCircle(screen, px-18, py+20, 7, pDark, true)
-		vector.DrawFilledCircle(screen, px+18, py+20, 7, pDark, true)
-	}
-	vector.DrawFilledCircle(screen, px-12, py+40, 7, pDark, true)
-	vector.DrawFilledCircle(screen, px+12, py+40, 7, pDark, true)
+	vector.DrawFilledCircle(screen, px, py+5, 3, pDark, true) // Nose
+	vector.DrawFilledRect(screen, px-15, py+15, 30, 25, color.White, true) // Torso
+
 	if costume == "typing" {
-		vector.DrawFilledRect(screen, px-40, py+25, 80, 20, color.RGBA{139,69,19,255}, true)
-		vector.DrawFilledRect(screen, px-15, py+15, 30, 15, color.RGBA{80,80,90,255}, true)
+		// Desk
+		vector.DrawFilledRect(screen, px-40, py+25, 80, 20, ColDesk, true)
+		
+		// KEYBOARD
+		kx, ky := px-25, py+25
+		vector.DrawFilledRect(screen, kx, ky, 50, 15, ColKeyBase, true) // Chassis
+		// Row 1 (Numbers - Dark)
+		for i:=0; i<10; i++ { vector.DrawFilledRect(screen, kx+1+float32(i*5), ky+1, 4, 3, ColKeyRow1, true) }
+		// Row 2 (Letters)
+		for i:=0; i<9; i++ { vector.DrawFilledRect(screen, kx+3+float32(i*5), ky+5, 4, 3, ColKeyRow2, true) }
+		// Row 3 (Home)
+		for i:=0; i<9; i++ { vector.DrawFilledRect(screen, kx+3+float32(i*5), ky+9, 4, 3, ColKeyRow2, true) }
+		// Spacebar
+		vector.DrawFilledRect(screen, kx+15, ky+13, 20, 2, ColKeySpace, true)
+
+		// Hands typing
 		offset := float32(0); if g.Timer.Active && g.Tick%10 < 5 { offset = -3 }
 		vector.DrawFilledCircle(screen, px-15, py+30+offset, 6, pDark, true)
 		vector.DrawFilledCircle(screen, px+15, py+30-offset, 6, pDark, true)
+
 	} else if costume == "rod" {
 		vector.StrokeLine(screen, px+15, py+20, px+40, py-10, 2, color.RGBA{139,69,19,255}, true)
+		vector.DrawFilledCircle(screen, px-12, py+40, 7, pDark, true)
+		vector.DrawFilledCircle(screen, px+12, py+40, 7, pDark, true)
+	} else {
+		// Default Limbs
+		vector.DrawFilledCircle(screen, px-18, py+20, 7, pDark, true)
+		vector.DrawFilledCircle(screen, px+18, py+20, 7, pDark, true)
+		vector.DrawFilledCircle(screen, px-12, py+40, 7, pDark, true)
+		vector.DrawFilledCircle(screen, px+12, py+40, 7, pDark, true)
 	}
 }
 
@@ -526,6 +497,6 @@ func (g *Game) Layout(w, h int) (int, int) { return ScreenWidth, ScreenHeight }
 
 func main() {
 	ebiten.SetWindowSize(ScreenWidth*3, ScreenHeight*3)
-	ebiten.SetWindowTitle("Panda OS: Gopher Edition")
+	ebiten.SetWindowTitle("Panda OS: Keyboard Edition")
 	if err := ebiten.RunGame(NewGame()); err != nil { log.Fatal(err) }
 }

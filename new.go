@@ -396,7 +396,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		ppx, ppy := float64(g.Pacman.PlayerX*TileSize)+8, float64(g.Pacman.PlayerY*TileSize)+8
 		g.DrawPandaHead(screen, ppx, ppy, 8)
 		gpx, gpy := float64(g.Pacman.GhostX*TileSize)+8, float64(g.Pacman.GhostY*TileSize)+8
-		g.DrawGopher(screen, gpx, gpy)
+		g.DrawGopherHead(screen, gpx, gpy)
 
 		if g.Pacman.GameOver { ebitenutil.DebugPrintAt(screen, "GAME OVER (Space)", 100, 100) }
 		if g.Pacman.Win { ebitenutil.DebugPrintAt(screen, "YOU WIN! (Space)", 100, 100) }
@@ -407,7 +407,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 
 func (g *Game) DrawGopher(screen *ebiten.Image, x, y float64) {
 	px, py := float32(x), float32(y)
-	// Body: Kidney Bean (Bottom, Top, Connector)
+	// Body
 	vector.DrawFilledCircle(screen, px, py+15, 18, ColGopherBlue, true) // Bot
 	vector.DrawFilledCircle(screen, px-5, py-10, 16, ColGopherBlue, true) // Top
 	vector.DrawFilledRect(screen, px-20, py-10, 35, 25, ColGopherBlue, true) // Mid
@@ -420,12 +420,27 @@ func (g *Game) DrawGopher(screen *ebiten.Image, x, y float64) {
 	vector.DrawFilledRect(screen, px-10, py-2, 14, 8, ColGopherSnout, true)
 	vector.DrawFilledCircle(screen, px-10, py+2, 4, ColGopherSnout, true)
 	vector.DrawFilledCircle(screen, px+4, py+2, 4, ColGopherSnout, true)
-	vector.DrawFilledCircle(screen, px-3, py-1, 3, ColGopherDark, true) // Nose
+	vector.DrawFilledCircle(screen, px-3, py-1, 3, ColGopherDark, true)
 	// Tooth
 	vector.DrawFilledRect(screen, px-5, py+4, 4, 5, ColGopherTooth, true)
 	// Ears
 	vector.DrawFilledCircle(screen, px-18, py-18, 4, ColGopherBlue, true)
 	vector.DrawFilledCircle(screen, px+8, py-20, 4, ColGopherBlue, true)
+}
+
+func (g *Game) DrawGopherHead(screen *ebiten.Image, x, y float64) {
+	// Scaled down head for Pacman
+	px, py := float32(x), float32(y)
+	vector.DrawFilledCircle(screen, px, py, 7, ColGopherBlue, true)
+	vector.DrawFilledCircle(screen, px-6, py-5, 2, ColGopherBlue, true)
+	vector.DrawFilledCircle(screen, px+6, py-5, 2, ColGopherBlue, true)
+	vector.DrawFilledCircle(screen, px-3, py-2, 3, color.White, true)
+	vector.DrawFilledCircle(screen, px+3, py-2, 3, color.White, true)
+	vector.DrawFilledCircle(screen, px-3, py-2, 1, ColGopherDark, true)
+	vector.DrawFilledCircle(screen, px+3, py-2, 1, ColGopherDark, true)
+	vector.DrawFilledCircle(screen, px, py+2, 3, ColGopherSnout, true)
+	vector.DrawFilledCircle(screen, px, py+1, 1, ColGopherDark, true)
+	vector.DrawFilledRect(screen, px-1, py+3, 2, 2, ColGopherTooth, true)
 }
 
 func (g *Game) DrawHeart(screen *ebiten.Image, x, y float64) {
@@ -439,15 +454,15 @@ func (g *Game) DrawPanda(screen *ebiten.Image, x, y float64, costume string) {
 	px, py := float32(x), float32(y)
 	pDark := color.RGBA{20, 20, 20, 255}
 	// Standard Body
-	vector.DrawFilledCircle(screen, px-12, py-15, 8, pDark, true) // Ears
+	vector.DrawFilledCircle(screen, px-12, py-15, 8, pDark, true) 
 	vector.DrawFilledCircle(screen, px+12, py-15, 8, pDark, true)
-	vector.DrawFilledCircle(screen, px, py, 20, color.White, true) // Head
-	vector.DrawFilledCircle(screen, px-8, py-2, 6, pDark, true) // Eyes
+	vector.DrawFilledCircle(screen, px, py, 20, color.White, true) 
+	vector.DrawFilledCircle(screen, px-8, py-2, 6, pDark, true) 
 	vector.DrawFilledCircle(screen, px+8, py-2, 6, pDark, true)
 	vector.DrawFilledCircle(screen, px-8, py-3, 2, color.White, true)
 	vector.DrawFilledCircle(screen, px+8, py-3, 2, color.White, true)
-	vector.DrawFilledCircle(screen, px, py+5, 3, pDark, true) // Nose
-	vector.DrawFilledRect(screen, px-15, py+15, 30, 25, color.White, true) // Torso
+	vector.DrawFilledCircle(screen, px, py+5, 3, pDark, true) 
+	vector.DrawFilledRect(screen, px-15, py+15, 30, 25, color.White, true) 
 
 	if costume == "typing" {
 		// Desk
@@ -475,7 +490,6 @@ func (g *Game) DrawPanda(screen *ebiten.Image, x, y float64, costume string) {
 		vector.DrawFilledCircle(screen, px-12, py+40, 7, pDark, true)
 		vector.DrawFilledCircle(screen, px+12, py+40, 7, pDark, true)
 	} else {
-		// Default Limbs
 		vector.DrawFilledCircle(screen, px-18, py+20, 7, pDark, true)
 		vector.DrawFilledCircle(screen, px+18, py+20, 7, pDark, true)
 		vector.DrawFilledCircle(screen, px-12, py+40, 7, pDark, true)
@@ -497,6 +511,6 @@ func (g *Game) Layout(w, h int) (int, int) { return ScreenWidth, ScreenHeight }
 
 func main() {
 	ebiten.SetWindowSize(ScreenWidth*3, ScreenHeight*3)
-	ebiten.SetWindowTitle("Panda OS: Keyboard Edition")
+	ebiten.SetWindowTitle("Panda OS: Final")
 	if err := ebiten.RunGame(NewGame()); err != nil { log.Fatal(err) }
 }

@@ -374,4 +374,21 @@ func (g *Game) DrawPanda(screen *ebiten.Image, x, y float64, costume string) {
 	
 	case "chef":
 		vector.DrawFilledRect(screen, px-10, py-35, 20, 15, ColPandaWhite, true)
-		vector.DrawFilledCircle(screen, px, py-
+		vector.DrawFilledCircle(screen, px, py-35, 12, ColPandaWhite, true)
+
+	case "rod":
+		vector.StrokeLine(screen, px+15, py+20, px+40, py-10, 2, ColDesk, true)
+	}
+}
+
+func (g *Game) Layout(w, h int) (int, int) {
+	return ScreenWidth, ScreenHeight
+}
+
+func main() {
+	ebiten.SetWindowSize(ScreenWidth*3, ScreenHeight*3)
+	ebiten.SetWindowTitle("Panda: Stats & Focus Update")
+	if err := ebiten.RunGame(NewGame()); err != nil {
+		log.Fatal(err)
+	}
+}
